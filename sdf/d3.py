@@ -1,8 +1,8 @@
 import functools
 import numpy as np
-import operator
+import torch
 
-from . import dn, d2, ease, mesh
+from . import dn, d2, ease, mesh, torch_util as tu
 
 # Constants
 
@@ -82,19 +82,15 @@ def op32(f):
 
 
 def _length(a):
-    return np.linalg.norm(a, axis=1)
+    return torch.linalg.norm(a, dim=1)
 
 
-def _normalize(a):
+def _normalize_np(a):
     return a / np.linalg.norm(a)
 
 
 def _dot(a, b):
-    return np.sum(a * b, axis=1)
-
-
-def _vec(*arrs):
-    return np.stack(arrs, axis=-1)
+    return (a * b).sum(1)
 
 
 def _perpendicular(v):
@@ -106,8 +102,9 @@ def _perpendicular(v):
     return np.cross(v, [1, 0, 0])
 
 
-_min = np.minimum
-_max = np.maximum
+_vec = tu.vec
+_min = tu.torch_min
+_max = tu.torch_max
 
 # Primitives
 
@@ -115,17 +112,17 @@ _max = np.maximum
 @sdf3
 def sphere(radius=1, center=ORIGIN):
     def f(p):
-        return _length(p - center) - radius
+        return _length(p - tu.to_torch(p, center)) - radius
 
     return f
 
 
 @sdf3
 def plane(normal=UP, point=ORIGIN):
-    normal = _normalize(normal)
+    normal = _normalize_np(normal)
 
     def f(p):
-        return np.dot(point - p, normal)
+        return torch.mv(tu.to_torch(p, point) - p, tu.to_torch(p, normal))
 
     return f
 
@@ -159,8 +156,8 @@ def box(size=1, center=ORIGIN, a=None, b=None):
     size = np.array(size)
 
     def f(p):
-        q = np.abs(p - center) - size / 2
-        return _length(_max(q, 0)) + _min(np.amax(q, axis=1), 0)
+        q = (p - tu.to_torch(p, center)) - tu.to_torch(p, size / 2)
+        return _length(_max(q, 0)) + _min(q.amax(1), 0)
 
     return f
 
@@ -170,22 +167,23 @@ def rounded_box(size, radius):
     size = np.array(size)
 
     def f(p):
-        q = np.abs(p) - size / 2 + radius
-        return _length(_max(q, 0)) + _min(np.amax(q, axis=1), 0) - radius
+        q = p.abs() - tu.to_torch(p, size / 2 + radius)
+        return _length(_max(q, 0)) + _min(q.amax(1), 0) - radius
 
     return f
 
 
 @sdf3
-def wireframe_box(size, thickness):
-    size = np.array(size)
+def wireframe_box(size_np, thickness_np):
+    size_np = np.array(size_np)
 
     def g(a, b, c):
         return _length(_max(_vec(a, b, c), 0)) + _min(_max(a, _max(b, c)), 0)
 
     def f(p):
-        p = np.abs(p) - size / 2 - thickness / 2
-        q = np.abs(p + thickness / 2) - thickness / 2
+        size, thickness = tu.to_torch(p, size_np, thickness_np)
+        p = p.abs() - size / 2 - thickness / 2
+        q = (p + thickness / 2).abs() - thickness / 2
         px, py, pz = p[:, 0], p[:, 1], p[:, 2]
         qx, qy, qz = q[:, 0], q[:, 1], q[:, 2]
         return _min(_min(g(px, qy, qz), g(qx, py, qz)), g(qx, qy, pz))
@@ -206,15 +204,16 @@ def torus(r1, r2):
 
 
 @sdf3
-def capsule(a, b, radius):
-    a = np.array(a)
-    b = np.array(b)
+def capsule(a_np, b_np, radius):
+    a_np = np.array(a_np)
+    b_np = np.array(b_np)
 
     def f(p):
+        a, b = tu.to_torch(p, a_np, b_np)
         pa = p - a
         ba = b - a
-        h = np.clip(np.dot(pa, ba) / np.dot(ba, ba), 0, 1).reshape((-1, 1))
-        return _length(pa - np.multiply(ba, h)) - radius
+        h = (torch.mv(pa, ba) / torch.dot(ba, ba)).clamp(0, 1).reshape((-1, 1))
+        return _length(pa - (ba * h)) - radius
 
     return f
 
@@ -228,27 +227,28 @@ def cylinder(radius):
 
 
 @sdf3
-def capped_cylinder(a, b, radius):
-    a = np.array(a)
-    b = np.array(b)
+def capped_cylinder(a_np, b_np, radius):
+    a_np = np.array(a_np)
+    b_np = np.array(b_np)
 
     def f(p):
+        a, b = tu.to_torch(p, a_np, b_np)
         ba = b - a
         pa = p - a
-        baba = np.dot(ba, ba)
-        paba = np.dot(pa, ba).reshape((-1, 1))
+        baba = torch.dot(ba, ba)
+        paba = torch.mv(pa, ba).reshape((-1, 1))
         x = _length(pa * baba - ba * paba) - radius * baba
-        y = np.abs(paba - baba * 0.5) - baba * 0.5
+        y = (paba - baba * 0.5).abs() - baba * 0.5
         x = x.reshape((-1, 1))
         y = y.reshape((-1, 1))
         x2 = x * x
         y2 = y * y * baba
-        d = np.where(
+        d = torch.where(
             _max(x, y) < 0,
             -_min(x2, y2),
-            np.where(x > 0, x2, 0) + np.where(y > 0, y2, 0),
+            torch.where(x > 0, x2, 0) + torch.where(y > 0, y2, 0),
         )
-        return np.sign(d) * np.sqrt(np.abs(d)) / baba
+        return torch.sign(d) * d.abs().sqrt() / baba
 
     return f
 
@@ -256,32 +256,33 @@ def capped_cylinder(a, b, radius):
 @sdf3
 def rounded_cylinder(ra, rb, h):
     def f(p):
-        d = _vec(_length(p[:, [0, 1]]) - ra + rb, np.abs(p[:, 2]) - h / 2 + rb)
+        d = _vec(_length(p[:, [0, 1]]) - ra + rb, p[:, 2].abs() - h / 2 + rb)
         return _min(_max(d[:, 0], d[:, 1]), 0) + _length(_max(d, 0)) - rb
 
     return f
 
 
 @sdf3
-def capped_cone(a, b, ra, rb):
-    a = np.array(a)
-    b = np.array(b)
+def capped_cone(a_np, b_np, ra, rb):
+    a_np = np.array(a_np)
+    b_np = np.array(b_np)
 
     def f(p):
+        a, b = tu.to_torch(p, a_np, b_np)
         rba = rb - ra
-        baba = np.dot(b - a, b - a)
+        baba = torch.dot(b - a, b - a)
         papa = _dot(p - a, p - a)
-        paba = np.dot(p - a, b - a) / baba
-        x = np.sqrt(papa - paba * paba * baba)
-        cax = _max(0, x - np.where(paba < 0.5, ra, rb))
-        cay = np.abs(paba - 0.5) - 0.5
+        paba = torch.mv(p - a, b - a) / baba
+        x = (papa - paba * paba * baba).sqrt()
+        cax = _max(0, x - torch.where(paba < 0.5, ra, rb))
+        cay = (paba - 0.5).abs() - 0.5
         k = rba * rba + baba
-        f = np.clip((rba * (x - ra) + paba * baba) / k, 0, 1)
+        f = ((rba * (x - ra) + paba * baba) / k).clamp(0, 1)
         cbx = x - ra - f * rba
         cby = paba - f
-        s = np.where(np.logical_and(cbx < 0, cay < 0), -1, 1)
-        return s * np.sqrt(
-            _min(cax * cax + cay * cay * baba, cbx * cbx + cby * cby * baba)
+        s = torch.where(torch.logical_and(cbx < 0, cay < 0), -1, 1)
+        return (
+            s * _min(cax * cax + cay * cay * baba, cbx * cbx + cby * cby * baba).sqrt()
         )
 
     return f
@@ -293,20 +294,21 @@ def rounded_cone(r1, r2, h):
         q = _vec(_length(p[:, [0, 1]]), p[:, 2])
         b = (r1 - r2) / h
         a = np.sqrt(1 - b * b)
-        k = np.dot(q, _vec(-b, a))
+        k = q @ _vec(-b, a)
         c1 = _length(q) - r1
         c2 = _length(q - _vec(0, h)) - r2
-        c3 = np.dot(q, _vec(a, b)) - r1
-        return np.where(k < 0, c1, np.where(k > a * h, c2, c3))
+        c3 = (q @ _vec(a, b)) - r1
+        return torch.where(k < 0, c1, torch.where(k > a * h, c2, c3))
 
     return f
 
 
 @sdf3
-def ellipsoid(size):
-    size = np.array(size)
+def ellipsoid(size_np):
+    size_np = np.array(size_np)
 
     def f(p):
+        size = tu.to_torch(p, size_np)
         k0 = _length(p / size)
         k1 = _length(p / (size * size))
         return k0 * (k0 - 1) / k1
@@ -317,7 +319,7 @@ def ellipsoid(size):
 @sdf3
 def pyramid(h):
     def f(p):
-        a = np.abs(p[:, [0, 1]]) - 0.5
+        a = p[:, [0, 1]].abs() - 0.5
         w = a[:, 1] > a[:, 0]
         a[w] = a[:, [1, 0]][w]
         px = a[:, 0]
@@ -328,11 +330,11 @@ def pyramid(h):
         qy = h * py - 0.5 * px
         qz = h * px + 0.5 * py
         s = _max(-qx, 0)
-        t = np.clip((qy - 0.5 * pz) / (m2 + 0.25), 0, 1)
+        t = ((qy - 0.5 * pz) / (m2 + 0.25)).clamp(0, 1)
         a = m2 * (qx + s) ** 2 + qy * qy
         b = m2 * (qx + 0.5 * t) ** 2 + (qy - m2 * t) ** 2
-        d2 = np.where(_min(qy, -qx * m2 - qy * 0.5) > 0, 0, _min(a, b))
-        return np.sqrt((d2 + qz * qz) / m2) * np.sign(_max(qz, -py))
+        d2 = torch.where(_min(qy, -qx * m2 - qy * 0.5) > 0, 0, _min(a, b))
+        return ((d2 + qz * qz) / m2).sqrt() * torch.sign(_max(qz, -py))
 
     return f
 
@@ -346,7 +348,7 @@ def tetrahedron(r):
         x = p[:, 0]
         y = p[:, 1]
         z = p[:, 2]
-        return (_max(np.abs(x + y) - z, np.abs(x - y) + z) - 1) / np.sqrt(3)
+        return (_max((x + y).abs() - z, (x - y).abs() + z) - 1) / np.sqrt(3)
 
     return f
 
@@ -354,20 +356,20 @@ def tetrahedron(r):
 @sdf3
 def octahedron(r):
     def f(p):
-        return (np.sum(np.abs(p), axis=1) - r) * np.tan(np.radians(30))
+        return (p.abs().sum(1) - r) * np.tan(np.radians(30))
 
     return f
 
 
 @sdf3
 def dodecahedron(r):
-    x, y, z = _normalize(((1 + np.sqrt(5)) / 2, 1, 0))
+    x, y, z = _normalize_np(((1 + np.sqrt(5)) / 2, 1, 0))
 
     def f(p):
-        p = np.abs(p / r)
-        a = np.dot(p, (x, y, z))
-        b = np.dot(p, (z, x, y))
-        c = np.dot(p, (y, z, x))
+        p = (p / r).abs()
+        a = torch.mv(p, tu.vec(x, y, z).to(p))
+        b = torch.mv(p, tu.vec(z, x, y).to(p))
+        c = torch.mv(p, tu.vec(y, z, x).to(p))
         q = (_max(_max(a, b), c) - x) * r
         return q
 
@@ -377,15 +379,15 @@ def dodecahedron(r):
 @sdf3
 def icosahedron(r):
     r *= 0.8506507174597755
-    x, y, z = _normalize(((np.sqrt(5) + 3) / 2, 1, 0))
+    x, y, z = _normalize_np(((np.sqrt(5) + 3) / 2, 1, 0))
     w = np.sqrt(3) / 3
 
     def f(p):
-        p = np.abs(p / r)
-        a = np.dot(p, (x, y, z))
-        b = np.dot(p, (z, x, y))
-        c = np.dot(p, (y, z, x))
-        d = np.dot(p, (w, w, w)) - x
+        p = (p / r).abs()
+        a = torch.mv(p, tu.vec(x, y, z).to(p))
+        b = torch.mv(p, tu.vec(z, x, y).to(p))
+        c = torch.mv(p, tu.vec(y, z, x).to(p))
+        d = torch.mv(p, tu.vec(w, w, w).to(p)) - x
         return _max(_max(_max(a, b), c) - x, d) * r
 
     return f
@@ -395,8 +397,9 @@ def icosahedron(r):
 
 
 @op3
-def translate(other, offset):
+def translate(other, offset_np):
     def f(p):
+        offset = tu.to_torch(p, offset_np)
         return other(p - offset)
 
     return f
@@ -412,14 +415,14 @@ def scale(other, factor):
     m = min(x, min(y, z))
 
     def f(p):
-        return other(p / s) * m
+        return other(p / tu.to_torch(p, s)) * tu.to_torch(p, m)
 
     return f
 
 
 @op3
 def rotate(other, angle, vector=Z):
-    x, y, z = _normalize(vector)
+    x, y, z = _normalize_np(vector)
     s = np.sin(angle)
     c = np.cos(angle)
     m = 1 - c
@@ -432,22 +435,22 @@ def rotate(other, angle, vector=Z):
     ).T
 
     def f(p):
-        return other(np.dot(p, matrix))
+        return other(p @ tu.to_torch(p, matrix))
 
     return f
 
 
 @op3
 def rotate_to(other, a, b):
-    a = _normalize(np.array(a))
-    b = _normalize(np.array(b))
+    a = _normalize_np(np.array(a))
+    b = _normalize_np(np.array(b))
     dot = np.dot(b, a)
     if dot == 1:
         return other
     if dot == -1:
         return rotate(other, np.pi, _perpendicular(a))
     angle = np.arccos(dot)
-    v = _normalize(np.cross(b, a))
+    v = _normalize_np(np.cross(b, a))
     return rotate(other, angle, v)
 
 
@@ -465,10 +468,10 @@ def circular_array(other, count, offset):
         x = p[:, 0]
         y = p[:, 1]
         z = p[:, 2]
-        d = np.hypot(x, y)
-        a = np.arctan2(y, x) % da
-        d1 = other(_vec(np.cos(a - da) * d, np.sin(a - da) * d, z))
-        d2 = other(_vec(np.cos(a) * d, np.sin(a) * d, z))
+        d = torch.hypot(x, y)
+        a = torch.atan2(y, x) % da
+        d1 = other(_vec(torch.cos(a - da) * d, torch.sin(a - da) * d, z))
+        d2 = other(_vec(torch.cos(a) * d, torch.sin(a) * d, z))
         return _min(d1, d2)
 
     return f
@@ -480,7 +483,7 @@ def circular_array(other, count, offset):
 @op3
 def elongate(other, size):
     def f(p):
-        q = np.abs(p) - size
+        q = p.abs() - tu.to_torch(p, size)
         x = q[:, 0].reshape((-1, 1))
         y = q[:, 1].reshape((-1, 1))
         z = q[:, 2].reshape((-1, 1))
@@ -496,8 +499,8 @@ def twist(other, k):
         x = p[:, 0]
         y = p[:, 1]
         z = p[:, 2]
-        c = np.cos(k * z)
-        s = np.sin(k * z)
+        c = torch.cos(k * z)
+        s = torch.sin(k * z)
         x2 = c * x - s * y
         y2 = s * x + c * y
         z2 = z
@@ -512,8 +515,8 @@ def bend(other, k):
         x = p[:, 0]
         y = p[:, 1]
         z = p[:, 2]
-        c = np.cos(k * x)
-        s = np.sin(k * x)
+        c = torch.cos(k * x)
+        s = torch.sin(k * x)
         x2 = c * x - s * y
         y2 = s * x + c * y
         z2 = z
@@ -523,14 +526,15 @@ def bend(other, k):
 
 
 @op3
-def bend_linear(other, p0, p1, v, e=ease.linear):
-    p0 = np.array(p0)
-    p1 = np.array(p1)
-    v = -np.array(v)
-    ab = p1 - p0
+def bend_linear(other, p0_np, p1_np, v_np, e=ease.linear):
+    p0_np = np.array(p0_np)
+    p1_np = np.array(p1_np)
+    v_np = -np.array(v_np)
+    ab_np = p1_np - p0_np
 
     def f(p):
-        t = np.clip(np.dot(p - p0, ab) / np.dot(ab, ab), 0, 1)
+        p0, v, ab = tu.to_torch(p, p0_np, v_np, ab_np)
+        t = (((p - p0) @ ab) / (ab @ ab)).clamp(0, 1)
         t = e(t).reshape((-1, 1))
         return other(p + t * v)
 
@@ -538,13 +542,14 @@ def bend_linear(other, p0, p1, v, e=ease.linear):
 
 
 @op3
-def bend_radial(other, r0, r1, dz, e=ease.linear):
+def bend_radial(other, r0_np, r1_np, dz_np, e=ease.linear):
     def f(p):
+        r0, r1, dz = tu.to_torch(p, r0_np, r1_np, dz_np)
         x = p[:, 0]
         y = p[:, 1]
         z = p[:, 2]
-        r = np.hypot(x, y)
-        t = np.clip((r - r0) / (r1 - r0), 0, 1)
+        r = torch.hypot(x, y)
+        t = ((r - r0) / (r1 - r0)).clamp(0, 1)
         z = z - dz * e(t)
         return other(_vec(x, y, z))
 
@@ -552,12 +557,13 @@ def bend_radial(other, r0, r1, dz, e=ease.linear):
 
 
 @op3
-def transition_linear(f0, f1, p0=-Z, p1=Z, e=ease.linear):
-    p0 = np.array(p0)
-    p1 = np.array(p1)
-    ab = p1 - p0
+def transition_linear(f0, f1, p0_np=-Z, p1_np=Z, e=ease.linear):
+    p0_np = np.array(p0_np)
+    p1_np = np.array(p1_np)
+    ab_np = p1_np - p0_np
 
     def f(p):
+        p0, ab = tu.to_torch(p, p0_np, ab_np)
         d1 = f0(p)
         d2 = f1(p)
         t = np.clip(np.dot(p - p0, ab) / np.dot(ab, ab), 0, 1)
@@ -572,8 +578,8 @@ def transition_radial(f0, f1, r0=0, r1=1, e=ease.linear):
     def f(p):
         d1 = f0(p)
         d2 = f1(p)
-        r = np.hypot(p[:, 0], p[:, 1])
-        t = np.clip((r - r0) / (r1 - r0), 0, 1)
+        r = torch.hypot(p[:, 0], p[:, 1])
+        t = ((r - r0) / (r1 - r0)).clamp(0, 1)
         t = e(t).reshape((-1, 1))
         return t * d2 + (1 - t) * d1
 
@@ -582,13 +588,14 @@ def transition_radial(f0, f1, r0=0, r1=1, e=ease.linear):
 
 @op3
 def wrap_around(other, x0, x1, r=None, e=ease.linear):
-    p0 = X * x0
-    p1 = X * x1
-    v = Y
+    p0_np = X * x0
+    p1_np = X * x1
+    v_np = Y
     if r is None:
-        r = np.linalg.norm(p1 - p0) / (2 * np.pi)
+        r = np.linalg.norm(p1_np - p0_np) / (2 * np.pi)
 
     def f(p):
+        p0, p1, v = tu.to_torch(p, p0_np, p1_np, v_np)
         x = p[:, 0]
         y = p[:, 1]
         z = p[:, 2]
@@ -616,7 +623,7 @@ def slice(other):
     b = other.negate() & s
 
     def f(p):
-        p = _vec(p[:, 0], p[:, 1], np.zeros(len(p)))
+        p = _vec(p[:, 0], p[:, 1], torch.zeros_like(p[:, 0]))
         A = a(p).reshape(-1)
         B = -b(p).reshape(-1)
         w = A <= 0

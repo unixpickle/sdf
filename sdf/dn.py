@@ -1,8 +1,11 @@
 import itertools
 import torch
+import numpy as np
 
-_min = torch.minimum
-_max = torch.maximum
+from . import torch_util as tu
+
+_min = tu.torch_min
+_max = tu.torch_max
 
 
 def union(a, *bs, k=None):
@@ -97,8 +100,8 @@ def shell(other, thickness):
 
 
 def repeat(other, spacing, count=None, padding=0):
-    count_th = torch.tensor(count) if count is not None else None
-    spacing_th = torch.tensor(spacing)
+    count = np.array(count) if count is not None else None
+    spacing = np.array(spacing)
 
     def neighbors(dim, padding, spacing):
         try:
@@ -116,18 +119,21 @@ def repeat(other, spacing, count=None, padding=0):
         return list(itertools.product(*axes))
 
     def f(p):
+        spacing_th = tu.to_torch(p, spacing)
         q = p / torch.where(
             spacing_th == 0, torch.ones_like(spacing_th), spacing_th
         ).to(p)
-        if count_th is None:
+        if count is None:
             index = q.round()
         else:
-            count_dev = count_th.to(index.device)
-            index = q.round().clamp(-count_dev, count_dev)
+            count_th = tu.to_torch(p, count)
+            index = q.round().clamp(-count_th, count_th)
 
         offsets = neighbors(p.shape[-1], padding, spacing)
-        indices = torch.cat([index + n for n in offsets])
-        A = other(p - spacing_th.to(p) * indices).view(len(offsets), -1)
-        return A.min(0)
+        indices = torch.cat([index + tu.to_torch(index, n) for n in offsets])
+        A = other(p.repeat(len(offsets), 1) - spacing_th * indices).view(
+            len(offsets), -1
+        )
+        return A.min(0)[0]
 
     return f

@@ -5,6 +5,7 @@ from skimage import measure
 import multiprocessing
 import itertools
 import numpy as np
+import torch
 import time
 
 from . import progress, stl
@@ -36,12 +37,12 @@ def _skip(sdf, job):
     x = (x0 + x1) / 2
     y = (y0 + y1) / 2
     z = (z0 + z1) / 2
-    r = abs(sdf(np.array([(x, y, z)])).reshape(-1)[0])
+    r = abs(sdf(torch.tensor([(x, y, z)])).item())
     d = np.linalg.norm(np.array((x - x0, y - y0, z - z0)))
     if r <= d:
         return False
     corners = np.array(list(itertools.product((x0, x1), (y0, y1), (z0, z1))))
-    values = sdf(corners).reshape(-1)
+    values = sdf(torch.from_numpy(corners)).reshape(-1).numpy()
     same = np.all(values > 0) if values[0] > 0 else np.all(values < 0)
     return same
 
@@ -52,7 +53,14 @@ def _worker(sdf, job, sparse):
         return None
         # return _debug_triangles(X, Y, Z)
     P = _cartesian_product(X, Y, Z)
-    volume = sdf(P).reshape((len(X), len(Y), len(Z)))
+    # Use a GPU if it is available.
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    volume = (
+        sdf(torch.from_numpy(P).to(device))
+        .reshape((len(X), len(Y), len(Z)))
+        .cpu()
+        .numpy()
+    )
     try:
         points = _marching_cubes(volume)
     except Exception:
@@ -79,7 +87,7 @@ def _estimate_bounds(sdf):
             break
         prev = threshold
         P = _cartesian_product(X, Y, Z)
-        volume = sdf(P).reshape((len(X), len(Y), len(Z)))
+        volume = sdf(torch.from_numpy(P)).reshape((len(X), len(Y), len(Z))).numpy()
         where = np.argwhere(np.abs(volume) <= threshold)
         x1, y1, z1 = (x0, y0, z0) + where.max(axis=0) * d + d / 2
         x0, y0, z0 = (x0, y0, z0) + where.min(axis=0) * d - d / 2

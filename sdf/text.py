@@ -1,6 +1,7 @@
 from PIL import Image, ImageFont, ImageDraw
 import scipy.ndimage as nd
 import numpy as np
+import torch
 
 from . import d2
 
@@ -80,6 +81,8 @@ def text(name, text, width=None, height=None, texture_point_size=512):
     rectangle = d2.rectangle((width / 2, height / 2))
 
     def f(p):
+        old_p = p
+        p = p.cpu().numpy()
         x = p[:, 0]
         y = p[:, 1]
         u = (x - x0) / (x1 - x0)
@@ -88,10 +91,10 @@ def text(name, text, width=None, height=None, texture_point_size=512):
         i = u * pw + px
         j = v * ph + py
         d = _bilinear_interpolate(texture, i, j)
-        q = rectangle(p).reshape(-1)
+        q = rectangle(old_p).cpu().numpy().reshape(-1)
         outside = (i < 0) | (i >= tw - 1) | (j < 0) | (j >= th - 1)
         d[outside] = q[outside]
-        return d
+        return torch.from_numpy(d).to(old_p)
 
     return f
 
