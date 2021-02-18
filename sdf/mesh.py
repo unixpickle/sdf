@@ -13,17 +13,20 @@ WORKERS = multiprocessing.cpu_count()
 SAMPLES = 2 ** 22
 BATCH_SIZE = 32
 
+
 def _marching_cubes(volume, level=0):
     verts, faces, _, _ = measure.marching_cubes(volume, level)
     return verts[faces].reshape((-1, 3))
+
 
 def _cartesian_product(*arrays):
     la = len(arrays)
     dtype = np.result_type(*arrays)
     arr = np.empty([len(a) for a in arrays] + [la], dtype=dtype)
     for i, a in enumerate(np.ix_(*arrays)):
-        arr[...,i] = a
+        arr[..., i] = a
     return arr.reshape(-1, la)
+
 
 def _skip(sdf, job):
     X, Y, Z = job
@@ -34,13 +37,14 @@ def _skip(sdf, job):
     y = (y0 + y1) / 2
     z = (z0 + z1) / 2
     r = abs(sdf(np.array([(x, y, z)])).reshape(-1)[0])
-    d = np.linalg.norm(np.array((x-x0, y-y0, z-z0)))
+    d = np.linalg.norm(np.array((x - x0, y - y0, z - z0)))
     if r <= d:
         return False
     corners = np.array(list(itertools.product((x0, x1), (y0, y1), (z0, z1))))
     values = sdf(corners).reshape(-1)
     same = np.all(values > 0) if values[0] > 0 else np.all(values < 0)
     return same
+
 
 def _worker(sdf, job, sparse):
     X, Y, Z = job
@@ -57,6 +61,7 @@ def _worker(sdf, job, sparse):
     scale = np.array([X[1] - X[0], Y[1] - Y[0], Z[1] - Z[0]])
     offset = np.array([X[0], Y[0], Z[0]])
     return points * scale + offset
+
 
 def _estimate_bounds(sdf):
     # TODO: raise exception if bound estimation fails
@@ -80,11 +85,17 @@ def _estimate_bounds(sdf):
         x0, y0, z0 = (x0, y0, z0) + where.min(axis=0) * d - d / 2
     return ((x0, y0, z0), (x1, y1, z1))
 
+
 def generate(
-        sdf,
-        step=None, bounds=None, samples=SAMPLES,
-        workers=WORKERS, batch_size=BATCH_SIZE,
-        verbose=True, sparse=True):
+    sdf,
+    step=None,
+    bounds=None,
+    samples=SAMPLES,
+    workers=WORKERS,
+    batch_size=BATCH_SIZE,
+    verbose=True,
+    sparse=True,
+):
 
     start = time.time()
 
@@ -102,27 +113,28 @@ def generate(
         dx = dy = dz = step
 
     if verbose:
-        print('min %g, %g, %g' % (x0, y0, z0))
-        print('max %g, %g, %g' % (x1, y1, z1))
-        print('step %g, %g, %g' % (dx, dy, dz))
+        print("min %g, %g, %g" % (x0, y0, z0))
+        print("max %g, %g, %g" % (x1, y1, z1))
+        print("step %g, %g, %g" % (dx, dy, dz))
 
     X = np.arange(x0, x1, dx)
     Y = np.arange(y0, y1, dy)
     Z = np.arange(z0, z1, dz)
 
     s = batch_size
-    Xs = [X[i:i+s+1] for i in range(0, len(X), s)]
-    Ys = [Y[i:i+s+1] for i in range(0, len(Y), s)]
-    Zs = [Z[i:i+s+1] for i in range(0, len(Z), s)]
+    Xs = [X[i : i + s + 1] for i in range(0, len(X), s)]
+    Ys = [Y[i : i + s + 1] for i in range(0, len(Y), s)]
+    Zs = [Z[i : i + s + 1] for i in range(0, len(Z), s)]
 
     batches = list(itertools.product(Xs, Ys, Zs))
     num_batches = len(batches)
-    num_samples = sum(len(xs) * len(ys) * len(zs)
-        for xs, ys, zs in batches)
+    num_samples = sum(len(xs) * len(ys) * len(zs) for xs, ys, zs in batches)
 
     if verbose:
-        print('%d samples in %d batches with %d workers' %
-            (num_samples, num_batches, workers))
+        print(
+            "%d samples in %d batches with %d workers"
+            % (num_samples, num_batches, workers)
+        )
 
     points = []
     skipped = empty = nonempty = 0
@@ -141,16 +153,18 @@ def generate(
     bar.done()
 
     if verbose:
-        print('%d skipped, %d empty, %d nonempty' % (skipped, empty, nonempty))
+        print("%d skipped, %d empty, %d nonempty" % (skipped, empty, nonempty))
         triangles = len(points) // 3
         seconds = time.time() - start
-        print('%d triangles in %g seconds' % (triangles, seconds))
+        print("%d triangles in %g seconds" % (triangles, seconds))
 
     return points
+
 
 def save(path, *args, **kwargs):
     points = generate(*args, **kwargs)
     stl.write_binary_stl(path, points)
+
 
 def _debug_triangles(X, Y, Z):
     x0, x1 = X[0], X[-1]
@@ -174,23 +188,46 @@ def _debug_triangles(X, Y, Z):
     ]
 
     return [
-        v[3], v[5], v[7],
-        v[5], v[3], v[1],
-        v[0], v[6], v[4],
-        v[6], v[0], v[2],
-        v[0], v[5], v[1],
-        v[5], v[0], v[4],
-        v[5], v[6], v[7],
-        v[6], v[5], v[4],
-        v[6], v[3], v[7],
-        v[3], v[6], v[2],
-        v[0], v[3], v[2],
-        v[3], v[0], v[1],
+        v[3],
+        v[5],
+        v[7],
+        v[5],
+        v[3],
+        v[1],
+        v[0],
+        v[6],
+        v[4],
+        v[6],
+        v[0],
+        v[2],
+        v[0],
+        v[5],
+        v[1],
+        v[5],
+        v[0],
+        v[4],
+        v[5],
+        v[6],
+        v[7],
+        v[6],
+        v[5],
+        v[4],
+        v[6],
+        v[3],
+        v[7],
+        v[3],
+        v[6],
+        v[2],
+        v[0],
+        v[3],
+        v[2],
+        v[3],
+        v[0],
+        v[1],
     ]
 
-def sample_slice(
-        sdf, w=1024, h=1024,
-        x=None, y=None, z=None, bounds=None):
+
+def sample_slice(sdf, w=1024, h=1024, x=None, y=None, z=None, bounds=None):
 
     if bounds is None:
         bounds = _estimate_bounds(sdf)
@@ -201,32 +238,34 @@ def sample_slice(
         Y = np.linspace(y0, y1, w)
         Z = np.linspace(z0, z1, h)
         extent = (Z[0], Z[-1], Y[0], Y[-1])
-        axes = 'ZY'
+        axes = "ZY"
     elif y is not None:
         Y = np.array([y])
         X = np.linspace(x0, x1, w)
         Z = np.linspace(z0, z1, h)
         extent = (Z[0], Z[-1], X[0], X[-1])
-        axes = 'ZX'
+        axes = "ZX"
     elif z is not None:
         Z = np.array([z])
         X = np.linspace(x0, x1, w)
         Y = np.linspace(y0, y1, h)
         extent = (Y[0], Y[-1], X[0], X[-1])
-        axes = 'YX'
+        axes = "YX"
     else:
-        raise Exception('x, y, or z position must be specified')
+        raise Exception("x, y, or z position must be specified")
 
     P = _cartesian_product(X, Y, Z)
     return sdf(P).reshape((w, h)), extent, axes
 
+
 def show_slice(*args, **kwargs):
     import matplotlib.pyplot as plt
-    show_abs = kwargs.pop('abs', False)
+
+    show_abs = kwargs.pop("abs", False)
     a, extent, axes = sample_slice(*args, **kwargs)
     if show_abs:
         a = np.abs(a)
-    im = plt.imshow(a, extent=extent, origin='lower')
+    im = plt.imshow(a, extent=extent, origin="lower")
     plt.xlabel(axes[0])
     plt.ylabel(axes[1])
     plt.colorbar(im)

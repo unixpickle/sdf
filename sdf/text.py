@@ -7,6 +7,7 @@ from . import d2
 # TODO: add support for newlines?
 # TODO: compute texture_point_size based on mesh resolution
 
+
 def measure_text(name, text, width=None, height=None):
     font = ImageFont.truetype(name, 96)
     x0, y0, x1, y1 = font.getbbox(text)
@@ -18,6 +19,7 @@ def measure_text(name, text, width=None, height=None):
     if height is None:
         height = width / aspect
     return (width, height)
+
 
 @d2.sdf2
 def text(name, text, width=None, height=None, texture_point_size=512):
@@ -33,7 +35,7 @@ def text(name, text, width=None, height=None, texture_point_size=512):
     th = y1 - y0 + 1 + py * 2
 
     # render to 1-bit image
-    im = Image.new('1', (tw, th))
+    im = Image.new("1", (tw, th))
     draw = ImageDraw.Draw(im)
     draw.text((px - x0, py - y0), text, font=font, fill=255)
 
@@ -78,8 +80,8 @@ def text(name, text, width=None, height=None, texture_point_size=512):
     rectangle = d2.rectangle((width / 2, height / 2))
 
     def f(p):
-        x = p[:,0]
-        y = p[:,1]
+        x = p[:, 0]
+        y = p[:, 1]
         u = (x - x0) / (x1 - x0)
         v = (y - y0) / (y1 - y0)
         v = 1 - v
@@ -87,11 +89,12 @@ def text(name, text, width=None, height=None, texture_point_size=512):
         j = v * ph + py
         d = _bilinear_interpolate(texture, i, j)
         q = rectangle(p).reshape(-1)
-        outside = (i < 0) | (i >= tw-1) | (j < 0) | (j >= th-1)
+        outside = (i < 0) | (i >= tw - 1) | (j < 0) | (j >= th - 1)
         d[outside] = q[outside]
         return d
 
     return f
+
 
 def _bilinear_interpolate(a, x, y):
     x0 = np.floor(x).astype(int)

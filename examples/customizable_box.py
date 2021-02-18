@@ -18,6 +18,7 @@ LID_DEPTH = 0.75
 LID_RADIUS = 0.125
 SAMPLES = 2 ** 24
 
+
 def dividers():
     col_spacing = WIDTH / COLS
     row_spacing = HEIGHT / ROWS
@@ -33,23 +34,26 @@ def dividers():
         r = r.translate((0, row_spacing / 2, 0))
     return c | r
 
+
 def box():
     d = dividers()
     p = WALL_THICKNESS
     f = rounded_box((WIDTH - p, HEIGHT - p, 1e9), WALL_RADIUS)
-    f &= slab(z0=p/2).k(BOTTOM_RADIUS)
+    f &= slab(z0=p / 2).k(BOTTOM_RADIUS)
     d &= f
     f = f.shell(WALL_THICKNESS)
     f &= slab(z1=DEPTH).k(TOP_FILLET)
     return f | d
 
+
 def lid():
     p = WALL_THICKNESS
     f = rounded_box((WIDTH + p, HEIGHT + p, 1e9), WALL_RADIUS)
-    f &= slab(z0=p/2).k(LID_RADIUS)
+    f &= slab(z0=p / 2).k(LID_RADIUS)
     f = f.shell(LID_THICKNESS)
     f &= slab(z1=LID_DEPTH).k(TOP_FILLET)
     return f
 
-box().save('box.stl', samples=SAMPLES)
-lid().save('lid.stl', samples=SAMPLES)
+
+box().save("box.stl", samples=SAMPLES)
+lid().save("lid.stl", samples=SAMPLES)

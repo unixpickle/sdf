@@ -17,4 +17,4 @@ c = cylinder(0.25).orient(X)
 f -= c.translate(Z * -2.5).k(0.1)
 f -= c.translate(Z * 2.5).k(0.1)
 
-f.save('knurling.stl', samples=2**26)
+f.save("knurling.stl", samples=2 ** 26)

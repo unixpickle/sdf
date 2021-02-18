@@ -10,4 +10,4 @@ f |= f.translate((2.7 / 2, 2.7, 0))
 f &= cylinder(10)
 f |= (cylinder(12) - cylinder(10)) & slab(z0=-0.5, z1=0.5).k(0.25)
 
-f.save('weave.stl')
+f.save("weave.stl")

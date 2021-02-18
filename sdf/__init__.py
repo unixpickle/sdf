@@ -6,18 +6,8 @@ from .d2 import *
 
 from .d3 import *
 
-from .text import (
-    measure_text,
-    text,
-)
+from .text import measure_text, text
 
-from .mesh import (
-    generate,
-    save,
-    sample_slice,
-    show_slice,
-)
+from .mesh import generate, save, sample_slice, show_slice
 
-from .stl import (
-    write_binary_stl,
-)
+from .stl import write_binary_stl
